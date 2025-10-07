@@ -1,14 +1,14 @@
 import streamlit as st
 import numpy as np
 from typing import Dict
-from plant_stub import Plant
+from plant_neqsim import PlantNeqSim
 from ui.image_panel import render_process_panel
 
 st.set_page_config("BTX Benzene Column — Turn-based OTS", layout="wide")
 
 # ---- Session bootstrap ----
 if "plant" not in st.session_state:
-    st.session_state.plant = Plant()
+    st.session_state.plant = PlantNeqSim()
 if "turn" not in st.session_state:
     st.session_state.turn = 0
 if "log" not in st.session_state:
@@ -16,7 +16,7 @@ if "log" not in st.session_state:
 if "phase" not in st.session_state:
     st.session_state.phase = "READY"   # READY -> APPLIED
 
-plant: Plant = st.session_state.plant
+plant: PlantNeqSim = st.session_state.plant
 
 # ---- Safety thresholds (guardrails) ----
 LIMITS = {
@@ -34,7 +34,7 @@ with st.sidebar:
     F_feed       = st.slider("Feed rate (t/h)", 50, 120, 80, step=1)
     controller_choice = st.selectbox("Controller", ["NN policy", "Linear MPC (2×2)"])
     if st.button("Reset scenario"):
-        st.session_state.plant = Plant()
+        st.session_state.plant = PlantNeqSim()
         st.session_state.turn = 0
         st.session_state.log = []
         st.session_state.phase = "READY"

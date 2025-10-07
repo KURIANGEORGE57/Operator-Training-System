@@ -3,8 +3,15 @@ from typing import Dict
 
 class Plant:
     """
-    Tiny, stable stub of a benzene column "plant".
-    Replace physics_step() with your NN surrogate or DWSIM-backed service.
+    Deprecated light-weight stub of the benzene column model.
+
+    The production Streamlit experience now relies on
+    :class:`plant_neqsim.PlantNeqSim`, which augments the original toy
+    dynamics with NeqSim-based VLE lookups.  This module is kept as a
+    reference implementation and potential fallback for environments where
+    the NeqSim dependency cannot be installed.  The public API intentionally
+    mirrors the NeqSim-backed model so the UI/controllers can switch between
+    implementations without changes.
     """
     def __init__(self):
         self.state = {
