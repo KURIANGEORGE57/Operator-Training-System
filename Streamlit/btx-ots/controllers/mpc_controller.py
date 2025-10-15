@@ -2,6 +2,11 @@ import numpy as np
 import cvxpy as cp
 from typing import Dict
 
+from logger import get_logger
+
+
+LOGGER = get_logger(__name__)
+
 class ControllerMPC:
     """
     2×2 Linear MPC (reflux, reboil) -> (purity, dP).
@@ -71,9 +76,22 @@ class ControllerMPC:
         self.u_hi.value = np.array([r_hi, q_hi])
         self.du_max.value = du_max
 
-        self.prob.solve(solver=cp.OSQP, warm_start=True, eps_abs=1e-4, eps_rel=1e-4, max_iter=4000)
+        try:
+            self.prob.solve(solver=cp.OSQP, warm_start=True, eps_abs=1e-4, eps_rel=1e-4, max_iter=4000)
+        except cp.SolverError as exc:
+            LOGGER.warning("MPC solver raised %s; falling back to previous setpoints: %s", type(exc).__name__, exc)
+            status = "solver_error"
+            u0_value = None
+        else:
+            status = self.prob.status
+            u0_value = self.u[:,0].value
 
-        u0 = self.u[:,0].value
+        if status not in {cp.OPTIMAL, cp.OPTIMAL_INACCURATE} or u0_value is None:
+            LOGGER.warning("MPC solver returned status %s with u0=%s; using previous setpoints.", status, u0_value)
+            u0 = np.array([rr_last, qreb_last], dtype=float)
+        else:
+            u0 = u0_value
+
         rr = float(np.clip(u0[0], r_lo, r_hi))
         qreb = float(np.clip(u0[1], q_lo, q_hi))
         totol = float(state["F_ToTol"])  # leave transfer flow unchanged
