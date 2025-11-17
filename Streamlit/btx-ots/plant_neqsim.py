@@ -15,19 +15,45 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Dict, Optional
+import logging
+import warnings
 
 import numpy as np
+
+from plant_base import PlantBase
+
+# Configure logging for NeqSim integration
+logger = logging.getLogger(__name__)
 
 try:  # pragma: no cover - optional dependency for richer physics
     from neqsim.thermo import fluid
     from neqsim.thermo.thermoTools import PHflash, TPflash
 
     _HAVE_NEQSIM = True
-except Exception:  # pragma: no cover - best effort guardrail
+    logger.info("NeqSim thermo library loaded successfully")
+except ImportError as e:
+    # NeqSim not installed - expected in some environments
     fluid = None  # type: ignore[assignment]
     PHflash = None  # type: ignore[assignment]
     TPflash = None  # type: ignore[assignment]
     _HAVE_NEQSIM = False
+    logger.info(
+        "NeqSim not available (ImportError: %s). "
+        "Using correlation-based fallback for thermodynamic calculations.",
+        str(e),
+    )
+except Exception as e:
+    # Unexpected error during import
+    fluid = None  # type: ignore[assignment]
+    PHflash = None  # type: ignore[assignment]
+    TPflash = None  # type: ignore[assignment]
+    _HAVE_NEQSIM = False
+    logger.warning(
+        "Unexpected error loading NeqSim (%s: %s). "
+        "Using correlation-based fallback for thermodynamic calculations.",
+        type(e).__name__,
+        str(e),
+    )
 
 
 @dataclass
@@ -42,7 +68,7 @@ class _ColumnSpec:
     feed_pressure_bar: float = 2.2
 
 
-class PlantNeqSim:
+class PlantNeqSim(PlantBase):
     """First-order benzene/toluene column model using NeqSim for VLE.
 
     The class exposes the same small API as the historical ``Plant`` stub:
@@ -107,18 +133,31 @@ class PlantNeqSim:
         return float(np.clip(value, lo, hi))
 
     def _make_feed_fluid(self, flow_tph: float, zB: float) -> Optional[object]:
-        """Construct or reuse a NeqSim fluid for the given feed conditions."""
+        """Construct or reuse a NeqSim fluid for the given feed conditions.
 
+        Args:
+            flow_tph: Feed flow rate (tonnes per hour)
+            zB: Benzene mole fraction in feed (0-1)
+
+        Returns:
+            NeqSim fluid object if available, otherwise a dict with basic properties.
+            Returns cached object if conditions match previous call.
+
+        Note:
+            Gracefully falls back to correlation-based dict if NeqSim fails.
+        """
         signature = (round(flow_tph, 1), round(zB, 4))
         if self._cached_feed_signature == signature:
             return self._cached_feed
 
         if not _HAVE_NEQSIM:
+            # NeqSim not available - use simple dict fallback
             self._cached_feed = {"zB": zB, "flow": flow_tph}
             self._cached_feed_signature = signature
             return self._cached_feed
 
         try:
+            # Create NeqSim fluid with SRK equation of state
             feed = fluid("srk")  # type: ignore[operator]
             feed.addComponent("benzene", max(zB, 1e-5))
             feed.addComponent("toluene", max(1.0 - zB, 1e-5))
@@ -127,8 +166,33 @@ class PlantNeqSim:
             feed.setPressure(self.spec.feed_pressure_bar)
             feed.setTotalFlowRate(max(flow_tph, 1e-3), "kg/hr")
             feed.init(1)
-        except Exception:
-            # Degrade gracefully – behave like the pure dict fallback.
+
+            logger.debug(
+                "Created NeqSim feed fluid: %.1f t/h, zB=%.4f", flow_tph, zB
+            )
+
+        except (ValueError, AttributeError) as e:
+            # NeqSim parameter error - log and fall back to correlation
+            logger.warning(
+                "NeqSim feed fluid creation failed (%s: %s). "
+                "Using correlation fallback for flow=%.1f t/h, zB=%.4f",
+                type(e).__name__,
+                str(e),
+                flow_tph,
+                zB,
+            )
+            feed = {"zB": zB, "flow": flow_tph}
+
+        except Exception as e:
+            # Unexpected error - log and fall back
+            logger.error(
+                "Unexpected error creating NeqSim feed fluid (%s: %s). "
+                "Using correlation fallback for flow=%.1f t/h, zB=%.4f",
+                type(e).__name__,
+                str(e),
+                flow_tph,
+                zB,
+            )
             feed = {"zB": zB, "flow": flow_tph}
 
         self._cached_feed = feed
@@ -136,27 +200,64 @@ class PlantNeqSim:
         return feed
 
     def _overhead_T_from_VLE(self, liq_benzene: float, feed_obj: Optional[object]) -> float:
-        """Return an overhead temperature estimate based on VLE."""
+        """Return an overhead temperature estimate based on VLE.
 
+        Args:
+            liq_benzene: Benzene mole fraction in overhead liquid (0-1)
+            feed_obj: NeqSim feed fluid object (or dict fallback)
+
+        Returns:
+            Overhead temperature in °C
+
+        Note:
+            Uses NeqSim TPflash if available, otherwise uses empirical correlation.
+        """
         liq_benzene = float(np.clip(liq_benzene, 1e-4, 0.9999))
 
-        if _HAVE_NEQSIM and feed_obj is not None:
+        if _HAVE_NEQSIM and feed_obj is not None and isinstance(feed_obj, dict) is False:
             try:
+                # Create overhead vapor-liquid system and flash to equilibrium
                 top = fluid("srk")  # type: ignore[operator]
                 top.addComponent("benzene", liq_benzene)
                 top.addComponent("toluene", 1.0 - liq_benzene)
                 top.setMixingRule(2)
-                top.setTemperature(350.0)  # initial guess
+                top.setTemperature(350.0)  # initial guess (K)
                 top.setPressure(self.spec.overhead_pressure_bar)
                 top.init(1)
                 TPflash(top)
-                return float(top.getTemperature() - 273.15)
-            except Exception:
-                pass
+
+                temp_c = float(top.getTemperature() - 273.15)
+                logger.debug(
+                    "NeqSim VLE calculation: xB=%.4f -> T=%.2f°C",
+                    liq_benzene,
+                    temp_c,
+                )
+                return temp_c
+
+            except (ValueError, AttributeError) as e:
+                # NeqSim calculation error - fall back to correlation
+                logger.warning(
+                    "NeqSim VLE calculation failed (%s: %s) for xB=%.4f. "
+                    "Using correlation fallback.",
+                    type(e).__name__,
+                    str(e),
+                    liq_benzene,
+                )
+
+            except Exception as e:
+                # Unexpected error - log and fall back
+                logger.error(
+                    "Unexpected error in NeqSim VLE calculation (%s: %s) for xB=%.4f. "
+                    "Using correlation fallback.",
+                    type(e).__name__,
+                    str(e),
+                    liq_benzene,
+                )
 
         # Fallback: smooth correlation anchored to typical dew points
-        base = 80.1  # benzene boiling point at ~1 atm
-        tol_shift = 21.0  # toluene heavier -> hotter
+        # This correlation approximates benzene-toluene VLE behavior
+        base = 80.1  # benzene boiling point at ~1 atm (°C)
+        tol_shift = 21.0  # toluene heavier -> hotter (toluene BP ~110°C)
         blend = base + tol_shift * (1.0 - liq_benzene) ** 0.85
         return self._clip("T_top", blend)
 
