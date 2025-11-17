@@ -1,14 +1,15 @@
 # Operator Training System (OTS)
 
-A safety-critical operator training simulator for chemical process control, featuring two complementary training environments for benzene-toluene distillation operations.
+A safety-critical operator training simulator for chemical process control, featuring multiple training environments for benzene-toluene distillation and heat exchanger operations.
 
 ## Overview
 
 This repository contains operator training simulators designed to teach process control concepts and safe operation of chemical plants. The system features:
 
-- **Two training applications** with different complexity levels
+- **Three training applications** with different process units and complexity levels
 - **Physics-based plant models** with optional NeqSim thermodynamic calculations
 - **Three-tier safety system** (alarms, interlocks, emergency shutdown)
+- **What-if scenario analysis** (fouling, failures, upsets)
 - **Multiple control strategies** (manual operation, neural network policy, MPC)
 - **Interactive Streamlit interfaces** for realistic operator experience
 
@@ -65,7 +66,83 @@ The application will open at `http://localhost:8501`
 | Drum Level | <0.10 | - | <0.05 |
 | Benzene Purity | <0.9990 | - | - |
 
-### 2. MVP Training Environment (Simplified)
+### 2. Heat Exchanger Operator Training System
+
+**Location:** `Streamlit/hx-ots/`
+
+A turn-based shell-and-tube heat exchanger simulator with realistic what-if scenarios and failure modes.
+
+#### Features
+
+- **Realistic Physics**: Counter-flow heat exchanger with effectiveness-NTU model
+- **Safety-Critical Systems**:
+  - Alarms (high temperatures, high ΔP, fouling, tube leaks)
+  - Interlocks (automatic flow adjustments for protection)
+  - Emergency Shutdown (ESD) for critical conditions
+- **What-If Scenarios**:
+  - Fouling (hot and cold side, gradual degradation)
+  - Tube leakage (hot fluid contamination of cold side)
+  - Pump trips (flow loss scenarios)
+  - Temperature upsets (feed temperature changes)
+- **Process Visualization**: ASCII schematic with real-time status
+- **Event Logging**: Complete audit trail of alarms and actions
+
+#### Quick Start
+
+```bash
+cd Streamlit/hx-ots
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+The application will open at `http://localhost:8501`
+
+#### Key Process Variables
+
+| Variable | Description | Normal Range | Units |
+|----------|-------------|--------------|-------|
+| T_hot_out | Hot outlet temperature | 55-70 | °C |
+| T_cold_out | Cold outlet temperature | 40-50 | °C |
+| F_hot | Hot side flow rate | 25-40 | kg/s |
+| F_cold | Cold side flow rate | 40-60 | kg/s |
+| Q_duty | Heat duty | 6000-9000 | kW |
+| dP_hot | Hot side pressure drop | 0.5-1.5 | bar |
+| dP_cold | Cold side pressure drop | 0.2-0.8 | bar |
+
+#### Safety Thresholds
+
+| Condition | Alarm | Interlock | ESD |
+|-----------|-------|-----------|-----|
+| Hot Outlet T | >140°C | >145°C | >150°C |
+| Cold Outlet T | >55°C | - | >60°C |
+| Hot Side ΔP | >2.0 bar | >2.3 bar | >2.5 bar |
+| Cold Side ΔP | >1.2 bar | - | >1.5 bar |
+| Fouling | >50% | >75% | - |
+| Tube Leak | >10% | - | >30% |
+
+#### What-If Scenarios
+
+**1. Fouling Accumulation**
+- Gradually reduces heat transfer effectiveness
+- Increases pressure drop
+- Requires increased cooling flow or shutdown for cleaning
+
+**2. Tube Leakage**
+- Hot process fluid leaks into cooling water
+- Contaminates cold side, raises cold inlet temperature
+- Critical leaks trigger ESD
+
+**3. Pump Trips**
+- Hot or cold pump failure
+- Loss of flow causes poor heat transfer
+- May trigger temperature alarms
+
+**4. Temperature Upsets**
+- High hot inlet temperature from upstream process
+- Can cause outlet temperature alarms
+- Requires increased cooling to compensate
+
+### 3. MVP Training Environment (Simplified)
 
 **Location:** `app.py` (root level)
 
@@ -94,6 +171,7 @@ All plant models inherit from `PlantBase` abstract class:
 ```
 PlantBase (abstract)
 ├── PlantNeqSim (production BTX model)
+├── PlantHeatExchanger (heat exchanger model)
 └── Plant (legacy stub model)
 ```
 
@@ -134,17 +212,31 @@ PlantBase (abstract)
 
 Comprehensive unit tests for safety-critical logic:
 
+**BTX Column Tests:**
 ```bash
 cd Streamlit/btx-ots
 pytest test_safety.py -v
 ```
 
-**Test Coverage:**
-- ✅ All alarm conditions (29 tests)
+Test Coverage (29 tests):
+- ✅ All alarm conditions
 - ✅ Interlock activation and limits
 - ✅ ESD triggers and boundary conditions
 - ✅ Move rate limiting
 - ✅ Multi-tier safety integration
+
+**Heat Exchanger Tests:**
+```bash
+cd Streamlit/hx-ots
+pytest test_safety_hx.py -v
+```
+
+Test Coverage (19 tests):
+- ✅ Temperature and pressure alarms
+- ✅ Flow, fouling, and leak alarms
+- ✅ Interlock protective actions
+- ✅ ESD triggers (temperature, pressure, leak)
+- ✅ Flow rate limiting
 
 ## 📦 Dependencies
 
@@ -198,20 +290,28 @@ Operator-Training-System/
 ├── scoring.py                  # Performance scoring
 ├── requirements.txt            # Root dependencies
 │
-├── Streamlit/btx-ots/         # BTX Training System
-│   ├── app.py                 # Main Streamlit application
-│   ├── plant_base.py          # Abstract plant model base class
-│   ├── plant_neqsim.py        # NeqSim-backed plant model
-│   ├── plant_stub.py          # Legacy correlation-based model
-│   ├── test_safety.py         # Safety system unit tests
-│   ├── requirements.txt       # BTX dependencies
+├── Streamlit/
 │   │
-│   ├── controllers/           # Control strategies
-│   │   ├── nn_controller.py   # Neural network policy
-│   │   └── mpc_controller.py  # Linear MPC
+│   ├── btx-ots/               # BTX Training System
+│   │   ├── app.py             # Main Streamlit application
+│   │   ├── plant_base.py      # Abstract plant model base class
+│   │   ├── plant_neqsim.py    # NeqSim-backed plant model
+│   │   ├── plant_stub.py      # Legacy correlation-based model
+│   │   ├── test_safety.py     # Safety system unit tests
+│   │   ├── requirements.txt   # BTX dependencies
+│   │   │
+│   │   ├── controllers/       # Control strategies
+│   │   │   ├── nn_controller.py   # Neural network policy
+│   │   │   └── mpc_controller.py  # Linear MPC
+│   │   │
+│   │   └── ui/                # UI components
+│   │       └── image_panel.py # Process schematic renderer
 │   │
-│   └── ui/                    # UI components
-│       └── image_panel.py     # Process schematic renderer
+│   └── hx-ots/                # Heat Exchanger Training System
+│       ├── app.py             # Main Streamlit application
+│       ├── plant_hx.py        # Heat exchanger plant model
+│       ├── test_safety_hx.py  # Safety system unit tests
+│       └── requirements.txt   # HX dependencies
 │
 ├── sim_core/                  # Core simulation framework (scaffold)
 │   └── plant_models.py

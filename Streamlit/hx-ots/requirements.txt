@@ -1,0 +1,9 @@
+# Heat Exchanger Operator Training System dependencies
+# Version pins ensure reproducible builds
+
+# Core framework
+streamlit==1.51.0
+numpy==2.3.5
+
+# Testing
+pytest==9.0.1
