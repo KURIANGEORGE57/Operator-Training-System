@@ -18,6 +18,24 @@ from typing import Dict, Optional
 
 import numpy as np
 
+from plant_constants import (
+    COLUMN_SPEC_DEFAULTS,
+    INITIAL_STATE,
+    VARIABLE_BOUNDS,
+    MIN_COMPOSITION,
+    MIN_FLOW_RATE,
+    KELVIN_OFFSET,
+    INITIAL_TEMP_GUESS_K,
+    VLE_FALLBACK,
+    SIGNATURE_PRECISION,
+    LEVEL_DYNAMICS,
+    PURITY_DYNAMICS,
+    PRESSURE_DROP_DYNAMICS,
+    OVERHEAD_TEMP,
+    ESD_SAFE_STATE,
+    DEFAULT_SCENARIO,
+)
+
 try:  # pragma: no cover - optional dependency for richer physics
     from neqsim.thermo import fluid
     from neqsim.thermo.thermoTools import PHflash, TPflash
@@ -34,12 +52,12 @@ except Exception:  # pragma: no cover - best effort guardrail
 class _ColumnSpec:
     """Convenience structure holding the pseudo steady-state design data."""
 
-    overhead_pressure_bar: float = 1.6
-    condenser_duty_tau: float = 0.5
-    reboiler_tau: float = 0.5
-    inventory_tau: float = 0.25
-    feed_temperature_c: float = 95.0
-    feed_pressure_bar: float = 2.2
+    overhead_pressure_bar: float = COLUMN_SPEC_DEFAULTS["overhead_pressure_bar"]
+    condenser_duty_tau: float = COLUMN_SPEC_DEFAULTS["condenser_duty_tau"]
+    reboiler_tau: float = COLUMN_SPEC_DEFAULTS["reboiler_tau"]
+    inventory_tau: float = COLUMN_SPEC_DEFAULTS["inventory_tau"]
+    feed_temperature_c: float = COLUMN_SPEC_DEFAULTS["feed_temperature_c"]
+    feed_pressure_bar: float = COLUMN_SPEC_DEFAULTS["feed_pressure_bar"]
 
 
 class PlantNeqSim:
@@ -73,16 +91,7 @@ class PlantNeqSim:
 
     def __init__(self) -> None:
         self.spec = _ColumnSpec()
-        self.state: Dict[str, float] = {
-            "xB_sd": 0.9950,   # benzene purity (side-draw)
-            "dP_col": 0.08,    # bar
-            "T_top": 84.5,     # °C
-            "L_Drum": 0.65,    # 0..1
-            "L_Bot":  0.56,    # 0..1
-            "F_Reflux": 25.0,  # t/h (actual)
-            "F_Reboil": 1.20,  # MW eq. (proxy)
-            "F_ToTol":  55.0,  # t/h
-        }
+        self.state: Dict[str, float] = INITIAL_STATE.copy()
         # Cached fluid used to evaluate thermo properties for the current
         # scenario (makes the physics step cheaper).
         self._cached_feed: Optional[object] = None
@@ -93,23 +102,17 @@ class PlantNeqSim:
     # ------------------------------------------------------------------
     @staticmethod
     def _clip(name: str, value: float) -> float:
-        bounds = {
-            "xB_sd": (0.90, 0.9999),
-            "dP_col": (0.02, 0.40),
-            "T_top": (60.0, 110.0),
-            "L_Drum": (0.0, 1.0),
-            "L_Bot": (0.0, 1.0),
-            "F_Reflux": (10.0, 45.0),
-            "F_Reboil": (0.3, 3.5),
-            "F_ToTol": (30.0, 90.0),
-        }
-        lo, hi = bounds[name]
+        """Clip variable to its valid bounds."""
+        lo, hi = VARIABLE_BOUNDS[name]
         return float(np.clip(value, lo, hi))
 
     def _make_feed_fluid(self, flow_tph: float, zB: float) -> Optional[object]:
         """Construct or reuse a NeqSim fluid for the given feed conditions."""
 
-        signature = (round(flow_tph, 1), round(zB, 4))
+        signature = (
+            round(flow_tph, SIGNATURE_PRECISION["flow_tph"]),
+            round(zB, SIGNATURE_PRECISION["zB"])
+        )
         if self._cached_feed_signature == signature:
             return self._cached_feed
 
@@ -120,12 +123,12 @@ class PlantNeqSim:
 
         try:
             feed = fluid("srk")  # type: ignore[operator]
-            feed.addComponent("benzene", max(zB, 1e-5))
-            feed.addComponent("toluene", max(1.0 - zB, 1e-5))
+            feed.addComponent("benzene", max(zB, MIN_COMPOSITION))
+            feed.addComponent("toluene", max(1.0 - zB, MIN_COMPOSITION))
             feed.setMixingRule(2)
-            feed.setTemperature(self.spec.feed_temperature_c + 273.15)
+            feed.setTemperature(self.spec.feed_temperature_c + KELVIN_OFFSET)
             feed.setPressure(self.spec.feed_pressure_bar)
-            feed.setTotalFlowRate(max(flow_tph, 1e-3), "kg/hr")
+            feed.setTotalFlowRate(max(flow_tph, MIN_FLOW_RATE), "kg/hr")
             feed.init(1)
         except Exception:
             # Degrade gracefully – behave like the pure dict fallback.
@@ -138,7 +141,11 @@ class PlantNeqSim:
     def _overhead_T_from_VLE(self, liq_benzene: float, feed_obj: Optional[object]) -> float:
         """Return an overhead temperature estimate based on VLE."""
 
-        liq_benzene = float(np.clip(liq_benzene, 1e-4, 0.9999))
+        liq_benzene = float(np.clip(
+            liq_benzene,
+            OVERHEAD_TEMP["benzene_clip_min"],
+            OVERHEAD_TEMP["benzene_clip_max"]
+        ))
 
         if _HAVE_NEQSIM and feed_obj is not None:
             try:
@@ -146,18 +153,18 @@ class PlantNeqSim:
                 top.addComponent("benzene", liq_benzene)
                 top.addComponent("toluene", 1.0 - liq_benzene)
                 top.setMixingRule(2)
-                top.setTemperature(350.0)  # initial guess
+                top.setTemperature(INITIAL_TEMP_GUESS_K)
                 top.setPressure(self.spec.overhead_pressure_bar)
                 top.init(1)
                 TPflash(top)
-                return float(top.getTemperature() - 273.15)
+                return float(top.getTemperature() - KELVIN_OFFSET)
             except Exception:
                 pass
 
         # Fallback: smooth correlation anchored to typical dew points
-        base = 80.1  # benzene boiling point at ~1 atm
-        tol_shift = 21.0  # toluene heavier -> hotter
-        blend = base + tol_shift * (1.0 - liq_benzene) ** 0.85
+        base = VLE_FALLBACK["benzene_bp_c"]
+        tol_shift = VLE_FALLBACK["toluene_shift_c"]
+        blend = base + tol_shift * (1.0 - liq_benzene) ** VLE_FALLBACK["toluene_exponent"]
         return self._clip("T_top", blend)
 
     # ------------------------------------------------------------------
@@ -168,10 +175,10 @@ class PlantNeqSim:
 
         x_next = dict(x)
 
-        feed_flow = float(sc.get("F_feed", 80.0))
-        feed_zB = float(sc.get("zB_feed", 0.60))
-        fouling_cond = float(sc.get("Fouling_Cond", 0.0))
-        fouling_reb = float(sc.get("Fouling_Reb", 0.0))
+        feed_flow = float(sc.get("F_feed", DEFAULT_SCENARIO["F_feed"]))
+        feed_zB = float(sc.get("zB_feed", DEFAULT_SCENARIO["zB_feed"]))
+        fouling_cond = float(sc.get("Fouling_Cond", DEFAULT_SCENARIO["Fouling_Cond"]))
+        fouling_reb = float(sc.get("Fouling_Reb", DEFAULT_SCENARIO["Fouling_Reb"]))
 
         feed_fluid = self._make_feed_fluid(feed_flow, feed_zB)
 
@@ -190,34 +197,34 @@ class PlantNeqSim:
             x_next[key] = self._clip(key, x[key] + (1.0 - np.exp(-1.0 / tau)) * delta)
 
         # Simple level dynamics – mass balance influenced by feed & draws
-        reflux_dev = x_next["F_Reflux"] - 25.0
-        feed_dev = feed_flow - 80.0
-        toluene_draw_dev = x_next["F_ToTol"] - 55.0
-        reboil_dev = x_next["F_Reboil"] - 1.2
+        reflux_dev = x_next["F_Reflux"] - PURITY_DYNAMICS["reflux_nominal"]
+        feed_dev = feed_flow - PRESSURE_DROP_DYNAMICS["feed_nominal"]
+        toluene_draw_dev = x_next["F_ToTol"] - PRESSURE_DROP_DYNAMICS["totol_nominal"]
+        reboil_dev = x_next["F_Reboil"] - PURITY_DYNAMICS["reboil_nominal"]
 
         x_next["L_Drum"] = self._clip(
             "L_Drum",
             x["L_Drum"]
-            + 0.0025 * reflux_dev
-            - 0.0015 * toluene_draw_dev
-            + 0.0010 * feed_dev,
+            + LEVEL_DYNAMICS["drum_reflux_coeff"] * reflux_dev
+            + LEVEL_DYNAMICS["drum_totol_coeff"] * toluene_draw_dev
+            + LEVEL_DYNAMICS["drum_feed_coeff"] * feed_dev,
         )
         x_next["L_Bot"] = self._clip(
             "L_Bot",
             x["L_Bot"]
-            + 0.0012 * feed_dev
-            - 0.0016 * toluene_draw_dev
-            - 0.0010 * reboil_dev,
+            + LEVEL_DYNAMICS["bot_feed_coeff"] * feed_dev
+            + LEVEL_DYNAMICS["bot_totol_coeff"] * toluene_draw_dev
+            + LEVEL_DYNAMICS["bot_reboil_coeff"] * reboil_dev,
         )
 
         # Benzene purity (side draw) responds to separation energy & feed
         quality_base = x["xB_sd"]
         purity_gain = (
-            0.0040 * (x_next["F_Reflux"] - 25.0) / 10.0
-            + 0.0030 * (x_next["F_Reboil"] - 1.2)
-            + 0.0025 * (feed_zB - 0.60) / 0.05
-            - 0.0040 * fouling_cond
-            - 0.0030 * fouling_reb
+            PURITY_DYNAMICS["reflux_gain"] * (x_next["F_Reflux"] - PURITY_DYNAMICS["reflux_nominal"]) / PURITY_DYNAMICS["reflux_scale"]
+            + PURITY_DYNAMICS["reboil_gain"] * (x_next["F_Reboil"] - PURITY_DYNAMICS["reboil_nominal"])
+            + PURITY_DYNAMICS["feed_gain"] * (feed_zB - PURITY_DYNAMICS["feed_nominal"]) / PURITY_DYNAMICS["feed_scale"]
+            + PURITY_DYNAMICS["cond_fouling_penalty"] * fouling_cond
+            + PURITY_DYNAMICS["reb_fouling_penalty"] * fouling_reb
         )
         x_next["xB_sd"] = self._clip("xB_sd", quality_base + purity_gain)
 
@@ -225,16 +232,25 @@ class PlantNeqSim:
         x_next["dP_col"] = self._clip(
             "dP_col",
             x["dP_col"]
-            + 0.012 * fouling_cond
-            + 0.010 * feed_dev / 40.0
-            + 0.006 * (x_next["F_Reflux"] - 25.0) / 15.0
-            - 0.004 * (x_next["F_ToTol"] - 55.0) / 15.0,
+            + PRESSURE_DROP_DYNAMICS["cond_fouling_coeff"] * fouling_cond
+            + PRESSURE_DROP_DYNAMICS["feed_dev_coeff"] * feed_dev / PRESSURE_DROP_DYNAMICS["feed_scale"]
+            + PRESSURE_DROP_DYNAMICS["reflux_coeff"] * (x_next["F_Reflux"] - PRESSURE_DROP_DYNAMICS["reflux_nominal"]) / PRESSURE_DROP_DYNAMICS["reflux_scale"]
+            + PRESSURE_DROP_DYNAMICS["totol_coeff"] * (x_next["F_ToTol"] - PRESSURE_DROP_DYNAMICS["totol_nominal"]) / PRESSURE_DROP_DYNAMICS["totol_scale"],
         )
 
         # Overhead temperature from VLE estimate
-        benzene_reflux = np.clip(0.92 + 0.06 * (x_next["xB_sd"] - 0.992) / 0.008 - 0.05 * fouling_cond, 0.85, 0.998)
+        benzene_reflux = np.clip(
+            OVERHEAD_TEMP["benzene_base_purity"]
+            + OVERHEAD_TEMP["benzene_purity_gain"] * (x_next["xB_sd"] - OVERHEAD_TEMP["purity_nominal"]) / OVERHEAD_TEMP["purity_scale"]
+            + OVERHEAD_TEMP["fouling_penalty"] * fouling_cond,
+            OVERHEAD_TEMP["min_benzene_reflux"],
+            OVERHEAD_TEMP["max_benzene_reflux"]
+        )
         top_temp = self._overhead_T_from_VLE(float(benzene_reflux), feed_fluid)
-        fouling_temp_bias = 12.0 * fouling_cond + 6.0 * fouling_reb
+        fouling_temp_bias = (
+            OVERHEAD_TEMP["cond_fouling_temp_bias"] * fouling_cond
+            + OVERHEAD_TEMP["reb_fouling_temp_bias"] * fouling_reb
+        )
         x_next["T_top"] = self._clip("T_top", top_temp + fouling_temp_bias)
 
         return x_next
@@ -254,11 +270,20 @@ class PlantNeqSim:
         """Move the plant towards a conservative safe configuration."""
 
         safe = {
-            "F_Reflux": 20.0,
-            "F_Reboil": 0.5,
-            "F_ToTol": 45.0,
+            "F_Reflux": ESD_SAFE_STATE["F_Reflux"],
+            "F_Reboil": ESD_SAFE_STATE["F_Reboil"],
+            "F_ToTol": ESD_SAFE_STATE["F_ToTol"],
         }
         self.state.update({k: self._clip(k, v) for k, v in safe.items()})
-        self.state["xB_sd"] = max(self.state.get("xB_sd", 0.95) - 0.002, 0.90)
-        self.state["dP_col"] = min(self.state.get("dP_col", 0.20), 0.25)
-        self.state["T_top"] = self._clip("T_top", self.state.get("T_top", 90.0) - 5.0)
+        self.state["xB_sd"] = max(
+            self.state.get("xB_sd", INITIAL_STATE["xB_sd"]) - ESD_SAFE_STATE["xB_sd_decrease"],
+            ESD_SAFE_STATE["xB_sd_min"]
+        )
+        self.state["dP_col"] = min(
+            self.state.get("dP_col", INITIAL_STATE["dP_col"]),
+            ESD_SAFE_STATE["dP_col_max"]
+        )
+        self.state["T_top"] = self._clip(
+            "T_top",
+            self.state.get("T_top", INITIAL_STATE["T_top"]) - ESD_SAFE_STATE["T_top_decrease"]
+        )
