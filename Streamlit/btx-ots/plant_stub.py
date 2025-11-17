@@ -1,7 +1,10 @@
 import numpy as np
 from typing import Dict
 
-class Plant:
+from plant_base import PlantBase
+
+
+class Plant(PlantBase):
     """
     Deprecated light-weight stub of the benzene column model.
 
