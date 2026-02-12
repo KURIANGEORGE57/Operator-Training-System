@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Dict, Tuple
 from PIL import Image, ImageDraw, ImageFont
 import streamlit as st
-import math
 
 # === STYLE ===
 CANVAS = (900, 1400)                    # (width, height) px
@@ -34,7 +33,7 @@ def _font(size=18):
     try:
         return ImageFont.truetype("arial.ttf", size)
     except Exception:
-        return ImageFont.load_default()
+        return ImageFont.load_default(size=size)
 
 def _draw_badge(draw: ImageDraw.ImageDraw, xy: Tuple[int,int], level: str, text: str):
     """Draw circular badge with label: level in {'ALARM','ILK','ESD'}."""
@@ -89,9 +88,9 @@ def _draw_equipment(draw: ImageDraw.ImageDraw):
     pr = ANCHORS["pump_reboil"]
     pt = ANCHORS["pump_tol"]
     _rounded_rect(draw, [pr[0]-60, pr[1]-25, pr[0]+60, pr[1]+25], radius=12)
-    _label(draw, (pr[0]+70, pr[1]-10), "Pump → Reboiler", size=18)
+    _label(draw, (pr[0]-50, pr[1]-10), "Pump → Reb", size=18)
     _rounded_rect(draw, [pt[0]-60, pt[1]-25, pt[0]+60, pt[1]+25], radius=12)
-    _label(draw, (pt[0]-210, pt[1]-10), "Pump → Toluene Tower", size=18)
+    _label(draw, (pt[0]-50, pt[1]-10), "Pump → Tol", size=18)
 
     # Basic piping
     # Overhead vapor to condenser to drum to reflux/overhead line hints
@@ -160,9 +159,10 @@ def render_process_panel(state: Dict, limits: Dict, events: Dict | None = None):
     elif state.get("L_Drum", 0.5) <= limits["L_drum_min"]:
         _draw_badge(draw, ANCHORS["drum"], "ALARM", "Low Reflux Drum Level")
 
-    # Off-spec benzene purity
+    # Off-spec benzene purity (offset below condenser to avoid overlap with T_top badge)
     if state["xB_sd"] < limits["xB_spec"]:
-        _draw_badge(draw, ANCHORS["condenser"], "ALARM", f"Off-Spec xB {state['xB_sd']:.5f}")
+        cond = ANCHORS["condenser"]
+        _draw_badge(draw, (cond[0], cond[1] + 50), "ALARM", f"Off-Spec xB {state['xB_sd']:.5f}")
 
     # Interlock/ESD event overlays
     if events and events.get("interlock"):
