@@ -5,7 +5,7 @@ from PIL import Image, ImageDraw, ImageFont
 import streamlit as st
 
 # === STYLE ===
-CANVAS = (900, 1400)                    # (width, height) px
+CANVAS = (900, 1420)                    # (width, height) px
 COLOR_BG = (255, 255, 255, 255)
 COLOR_STROKE = (25, 25, 25, 255)
 COLOR_TEXT = (20, 20, 20, 255)
@@ -24,8 +24,8 @@ ANCHORS: Dict[str, Tuple[int, int]] = {
     "condenser":   (450, 170),
     "drum":        (450, 110),
     "reb_heater":  (450, 1200),
-    "pump_reboil": (650, 1200),
-    "pump_tol":    (250, 1200),
+    "pump_reboil": (650, 1310),
+    "pump_tol":    (250, 1310),
 }
 
 @st.cache_resource
@@ -82,15 +82,15 @@ def _draw_equipment(draw: ImageDraw.ImageDraw):
     # Reboiler (fired heater)
     r = ANCHORS["reb_heater"]
     _rounded_rect(draw, [r[0]-160, r[1]-35, r[0]+160, r[1]+35], radius=10)
-    _label(draw, (r[0]+180, r[1]-12), "Fired Heater (Reboiler)", size=18)
+    _label(draw, (r[0]-100, r[1]-55), "Fired Heater (Reboiler)", size=18)
 
     # Pumps
     pr = ANCHORS["pump_reboil"]
     pt = ANCHORS["pump_tol"]
     _rounded_rect(draw, [pr[0]-60, pr[1]-25, pr[0]+60, pr[1]+25], radius=12)
-    _label(draw, (pr[0]-50, pr[1]-10), "Pump → Reb", size=18)
+    _label(draw, (pr[0]-55, pr[1]+30), "Pump (Reboiler)", size=16)
     _rounded_rect(draw, [pt[0]-60, pt[1]-25, pt[0]+60, pt[1]+25], radius=12)
-    _label(draw, (pt[0]-50, pt[1]-10), "Pump → Tol", size=18)
+    _label(draw, (pt[0]-65, pt[1]+30), "Pump (Tol Tower)", size=16)
 
     # Basic piping
     # Overhead vapor to condenser to drum to reflux/overhead line hints
@@ -101,7 +101,9 @@ def _draw_equipment(draw: ImageDraw.ImageDraw):
     # Bottoms to reboiler loop
     _pipe(draw, (bot[0], bot[1]), (r[0], r[1]-35))
     _pipe(draw, (r[0], r[1]+35), (bot[0], bot[1]-80))
-    # Bottoms to toluene transfer
+    # Reboiler to reboiler pump
+    _pipe(draw, (r[0]+160, r[1]), (pr[0]-60, pr[1]))
+    # Bottoms to toluene transfer pump
     _pipe(draw, (bot[0]-col_w//2, bot[1]-20), (pt[0], pt[1]-25))
 
 def _hud(draw: ImageDraw.ImageDraw, state: Dict):
