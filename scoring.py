@@ -1,4 +1,5 @@
 """Basic scoring utilities for the operator training system."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -21,7 +22,6 @@ class ScoreTracker:
 
     @property
     def average(self) -> float:
-        """Return the running average score."""
         if not self.history:
             return 0.0
         return float(np.mean(self.history))

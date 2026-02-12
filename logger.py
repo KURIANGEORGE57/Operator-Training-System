@@ -1,4 +1,5 @@
 """Logging utilities for the operator training system."""
+
 from __future__ import annotations
 
 import logging

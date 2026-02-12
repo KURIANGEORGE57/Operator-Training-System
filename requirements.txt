@@ -1,5 +1,4 @@
 # Core dependencies for Operator Training System
-# Version pins ensure reproducible builds and prevent breaking changes
 
 streamlit==1.51.0
 pydantic==2.12.4

@@ -1,4 +1,5 @@
 """Streamlit MVP for the operator training system."""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
@@ -25,7 +26,7 @@ class PlantState:
         return np.array([self.level, self.temperature, self.pressure], dtype=float)
 
     @classmethod
-    def from_array(cls, values: np.ndarray) -> "PlantState":
+    def from_array(cls, values: np.ndarray) -> PlantState:
         return cls(level=float(values[0]), temperature=float(values[1]), pressure=float(values[2]))
 
 
@@ -38,16 +39,12 @@ FAULT_LIBRARY = {
     "Level Sensor Drift": "Skews the reported level upward by a fixed offset.",
 }
 
+
 def initialize_session() -> None:
-    """Populate Streamlit session state with default objects."""
     if "plant_state" not in st.session_state:
         st.session_state.plant_state = PlantState(level=50.0, temperature=350.0, pressure=5.0)
     if "mv_settings" not in st.session_state:
-        st.session_state.mv_settings = {
-            "feed_valve": 0.5,
-            "heater_duty": 0.5,
-            "reflux_ratio": 0.5,
-        }
+        st.session_state.mv_settings = {"feed_valve": 0.5, "heater_duty": 0.5, "reflux_ratio": 0.5}
     if "active_faults" not in st.session_state:
         st.session_state.active_faults: List[str] = []
     if "score_tracker" not in st.session_state:
@@ -59,16 +56,13 @@ def initialize_session() -> None:
 def steady_state_map(mv_settings: Dict[str, float], faults: List[str]) -> Dict[str, float]:
     """Simple surrogate relating manipulated variables to process state."""
     base_state = np.array([50.0, 350.0, 5.0])
-    influence_matrix = np.array(
-        [
-            [40.0, 5.0, -10.0],   # feed valve impact on level, temperature, pressure
-            [5.0, 80.0, 2.0],     # heater duty impact
-            [-10.0, 10.0, 20.0],  # reflux ratio impact
-        ]
-    )
+    influence_matrix = np.array([
+        [40.0,  5.0, -10.0],
+        [ 5.0, 80.0,   2.0],
+        [-10.0, 10.0,  20.0],
+    ])
     mv_vector = np.array([mv_settings[mv] - 0.5 for mv in MVS])
-    state_delta = influence_matrix.T @ mv_vector
-    result = base_state + state_delta
+    result = base_state + influence_matrix.T @ mv_vector
 
     for fault in faults:
         if fault == "Heater Fouling":
@@ -88,8 +82,7 @@ def run_first_order_update(state: PlantState, target: Dict[str, float], dt: floa
     target_vec = np.array([target["level"], target["temperature"], target["pressure"]])
     updated = current + (target_vec - current) * (dt / tau)
     noise = np.random.normal(scale=[0.2, 0.5, 0.05])
-    new_state = updated + noise
-    return PlantState.from_array(new_state)
+    return PlantState.from_array(updated + noise)
 
 
 def render_sidebar() -> Dict[str, float]:
@@ -102,7 +95,7 @@ def render_sidebar() -> Dict[str, float]:
 
     selected_faults = st.sidebar.multiselect(
         "Injected Faults",
-        options=[fault for fault in FAULT_LIBRARY if fault != "None"],
+        options=[f for f in FAULT_LIBRARY if f != "None"],
         default=st.session_state.active_faults,
         help="Select process faults to challenge the operator.",
     )
@@ -110,9 +103,8 @@ def render_sidebar() -> Dict[str, float]:
 
     st.sidebar.write("\n**Fault Descriptions**")
     for name, description in FAULT_LIBRARY.items():
-        if name == "None":
-            continue
-        st.sidebar.caption(f"{name}: {description}")
+        if name != "None":
+            st.sidebar.caption(f"{name}: {description}")
 
     st.session_state.mv_settings = mv_settings
     return mv_settings
