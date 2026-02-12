@@ -98,8 +98,9 @@ class PlantNeqSim(PlantBase):
     """
 
     def __init__(self) -> None:
+        super().__init__()
         self.spec = _ColumnSpec()
-        self.state: Dict[str, float] = {
+        self.state = {
             "xB_sd": 0.9950,   # benzene purity (side-draw)
             "dP_col": 0.08,    # bar
             "T_top": 84.5,     # °C

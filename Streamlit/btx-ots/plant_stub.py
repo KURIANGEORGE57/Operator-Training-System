@@ -17,6 +17,7 @@ class Plant(PlantBase):
     implementations without changes.
     """
     def __init__(self):
+        super().__init__()
         self.state = {
             "xB_sd": 0.9950,   # benzene purity side-draw
             "dP_col": 0.08,    # bar
@@ -84,14 +85,16 @@ class Plant(PlantBase):
         return self.physics_step(self.state, u, scenario)
 
     def commit(self, x_next: Dict):
-        self.state = x_next
+        self.state = dict(x_next)
 
     def esd_safe_state(self):
-        # Simple safe state
         self.state.update({
             "F_Reflux": 20.0,
             "F_Reboil": 0.5,
             "F_ToTol": 40.0,
             "xB_sd": max(self.state["xB_sd"] - 0.001, 0.95),
             "dP_col": min(self.state["dP_col"], 0.28),
+            "T_top": self._clip("T_top", self.state.get("T_top", 90.0) - 5.0),
+            "L_Drum": max(self.state.get("L_Drum", 0.5), 0.20),
+            "L_Bot": max(self.state.get("L_Bot", 0.5), 0.20),
         })

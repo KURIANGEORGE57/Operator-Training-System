@@ -103,75 +103,51 @@ next_click  = b3.button("Next Turn", disabled=(st.session_state.phase!="APPLIED"
 scenario = {"F_feed": F_feed, "zB_feed": zB_feed,
             "Fouling_Cond": fouling_cond/100.0, "Fouling_Reb": fouling_reb/100.0}
 
+# ---- Apply setpoints through safety system ----
+def apply_setpoints(u_cap: Dict, events: Dict) -> None:
+    """Run safety logic and commit the resulting state."""
+    x_pred = plant.step(u=u_cap, scenario=scenario)
+    safe = safety_logic(x_pred, u_cap)
+
+    if safe["esd"]:
+        events["esd"] = True
+        st.error("ESD TRIGGERED — moving to safe state.")
+        plant.esd_safe_state()
+    elif safe["adjust"]:
+        events["interlock"] = True
+        u_adj = {
+            "SP_F_Reflux": safe["adjust"].get("SP_F_Reflux", u_cap["SP_F_Reflux"]),
+            "SP_F_Reboil": safe["adjust"].get("SP_F_Reboil", u_cap["SP_F_Reboil"]),
+            "SP_F_ToTol":  u_cap["SP_F_ToTol"],
+        }
+        x_final = plant.step(u=u_adj, scenario=scenario)
+        plant.commit(x_final)
+        msg = " | ".join(safe["alarms"] + safe["interlock"])
+        st.warning(msg if msg else "Interlock applied.")
+        st.session_state.log.append(f"TURN {st.session_state.turn}: {msg}")
+    else:
+        plant.commit(x_pred)
+        msg = " | ".join(safe["alarms"])
+        if msg:
+            st.warning(msg)
+            st.session_state.log.append(f"TURN {st.session_state.turn}: {msg}")
+
+    st.session_state.phase = "APPLIED"
+
 # ---- Handle actions ----
 events = {"interlock": False, "esd": False}
 
 if apply_click:
     u_req = {"SP_F_Reflux": SP_F_Reflux, "SP_F_Reboil": SP_F_Reboil, "SP_F_ToTol": SP_F_ToTol}
     u_cap = cap_moves(u_req, x)
-    x_pred = plant.step(u=u_cap, scenario=scenario)
-    safe = safety_logic(x_pred, u_cap)
-
-    if safe["esd"]:
-        events["esd"] = True
-        st.error("ESD TRIGGERED — moving to safe state.")
-        plant.esd_safe_state()
-    else:
-        if safe["adjust"]:
-            events["interlock"] = True
-            u_adj = {
-                "SP_F_Reflux": safe["adjust"].get("SP_F_Reflux", u_cap["SP_F_Reflux"]),
-                "SP_F_Reboil": safe["adjust"].get("SP_F_Reboil", u_cap["SP_F_Reboil"]),
-                "SP_F_ToTol":  u_cap["SP_F_ToTol"],
-            }
-            x_final = plant.step(u=u_adj, scenario=scenario)
-            plant.commit(x_final)
-            msg = " | ".join(safe["alarms"] + safe["interlock"])
-            st.warning(msg if msg else "Interlock applied.")
-            st.session_state.log.append(f"TURN {st.session_state.turn}: {msg}")
-        else:
-            plant.commit(x_pred)
-            msg = " | ".join(safe["alarms"])
-            if msg:
-                st.warning(msg)
-                st.session_state.log.append(f"TURN {st.session_state.turn}: {msg}")
-
-    st.session_state.phase = "APPLIED"
+    apply_setpoints(u_cap, events)
 
 elif ctrl_click:
-    # Controller proposes setpoints
     limits = {"reflux": (10.0, 45.0), "reboil": (0.3, 3.5), "totol": (30.0, 90.0),
               "dP_max": LIMITS["dP_alarm"], "xB_spec": LIMITS["xB_spec"]}
     u_suggest = controller.decide(state=x, scenario=scenario, limits=limits)
     u_cap = cap_moves(u_suggest, x)
-    x_pred = plant.step(u=u_cap, scenario=scenario)
-    safe = safety_logic(x_pred, u_cap)
-
-    if safe["esd"]:
-        events["esd"] = True
-        st.error("ESD TRIGGERED — moving to safe state.")
-        plant.esd_safe_state()
-    else:
-        if safe["adjust"]:
-            events["interlock"] = True
-            u_adj = {
-                "SP_F_Reflux": safe["adjust"].get("SP_F_Reflux", u_cap["SP_F_Reflux"]),
-                "SP_F_Reboil": safe["adjust"].get("SP_F_Reboil", u_cap["SP_F_Reboil"]),
-                "SP_F_ToTol":  u_cap["SP_F_ToTol"],
-            }
-            x_final = plant.step(u=u_adj, scenario=scenario)
-            plant.commit(x_final)
-            msg = " | ".join(safe["alarms"] + safe["interlock"])
-            st.warning(msg if msg else "Interlock applied.")
-            st.session_state.log.append(f"TURN {st.session_state.turn}: {msg}")
-        else:
-            plant.commit(x_pred)
-            msg = " | ".join(safe["alarms"])
-            if msg:
-                st.warning(msg)
-                st.session_state.log.append(f"TURN {st.session_state.turn}: {msg}")
-
-    st.session_state.phase = "APPLIED"
+    apply_setpoints(u_cap, events)
 
 elif next_click:
     st.session_state.turn += 1
