@@ -1,47 +1,18 @@
-"""Process flow diagram rendered with Pillow."""
+"""Process flow diagram rendered as interactive SVG.
+
+Produces a crisp, DCS-style vector schematic of the benzene-toluene
+distillation column with animated flow lines, instrument tags, and
+real-time safety status.
+"""
 
 from __future__ import annotations
 
 from typing import List
 
 import streamlit as st
-from PIL import Image, ImageDraw, ImageFont
+import streamlit.components.v1 as components
 
 from src.models.plant_state import PlantState
-
-
-# Color palette
-BG = (15, 20, 35)
-PIPE = (100, 140, 180)
-EQUIP = (50, 70, 100)
-EQUIP_BORDER = (80, 120, 160)
-TEXT_COLOR = (200, 215, 235)
-BADGE_AMBER = (245, 180, 50)
-BADGE_ORANGE = (240, 120, 40)
-BADGE_RED = (220, 50, 50)
-GREEN = (50, 200, 100)
-BLUE_ACCENT = (70, 130, 220)
-
-
-def _draw_rounded_rect(draw, xy, radius, fill, outline):
-    """Draw a rounded rectangle."""
-    x0, y0, x1, y1 = xy
-    r = radius
-    draw.rectangle([x0 + r, y0, x1 - r, y1], fill=fill)
-    draw.rectangle([x0, y0 + r, x1, y1 - r], fill=fill)
-    draw.pieslice([x0, y0, x0 + 2 * r, y0 + 2 * r], 180, 270, fill=fill)
-    draw.pieslice([x1 - 2 * r, y0, x1, y0 + 2 * r], 270, 360, fill=fill)
-    draw.pieslice([x0, y1 - 2 * r, x0 + 2 * r, y1], 90, 180, fill=fill)
-    draw.pieslice([x1 - 2 * r, y1 - 2 * r, x1, y1], 0, 90, fill=fill)
-    # Outline
-    draw.arc([x0, y0, x0 + 2 * r, y0 + 2 * r], 180, 270, fill=outline, width=2)
-    draw.arc([x1 - 2 * r, y0, x1, y0 + 2 * r], 270, 360, fill=outline, width=2)
-    draw.arc([x0, y1 - 2 * r, x0 + 2 * r, y1], 90, 180, fill=outline, width=2)
-    draw.arc([x1 - 2 * r, y1 - 2 * r, x1, y1], 0, 90, fill=outline, width=2)
-    draw.line([x0 + r, y0, x1 - r, y0], fill=outline, width=2)
-    draw.line([x0 + r, y1, x1 - r, y1], fill=outline, width=2)
-    draw.line([x0, y0 + r, x0, y1 - r], fill=outline, width=2)
-    draw.line([x1, y0 + r, x1, y1 - r], fill=outline, width=2)
 
 
 def render_schematic(
@@ -50,143 +21,336 @@ def render_schematic(
     interlock_active: bool,
     esd_triggered: bool,
 ) -> None:
-    """Render the process flow diagram with status overlays."""
+    """Render the process flow diagram as an SVG with animated flows."""
 
-    W, H = 900, 520
-    img = Image.new("RGB", (W, H), BG)
-    draw = ImageDraw.Draw(img)
-
-    # --- Column (center tall rectangle) ---
-    col_x, col_y = 350, 60
-    col_w, col_h = 80, 340
-    _draw_rounded_rect(
-        draw,
-        (col_x, col_y, col_x + col_w, col_y + col_h),
-        12,
-        EQUIP,
-        EQUIP_BORDER,
-    )
-    # Column trays (horizontal lines)
-    for i in range(1, 8):
-        ty = col_y + i * (col_h // 8)
-        draw.line(
-            [col_x + 10, ty, col_x + col_w - 10, ty], fill=EQUIP_BORDER, width=1
-        )
-    draw.text((col_x + 10, col_y + 5), "COLUMN", fill=TEXT_COLOR)
-
-    # --- Condenser (top right) ---
-    cond_x, cond_y = 520, 40
-    _draw_rounded_rect(
-        draw, (cond_x, cond_y, cond_x + 100, cond_y + 50), 8, EQUIP, EQUIP_BORDER
-    )
-    draw.text((cond_x + 10, cond_y + 15), "CONDENSER", fill=TEXT_COLOR)
-
-    # Overhead vapor pipe: column top -> condenser
-    draw.line(
-        [col_x + col_w, col_y + 25, cond_x, cond_y + 25], fill=PIPE, width=3
-    )
-
-    # --- Reflux Drum (right of condenser) ---
-    drum_x, drum_y = 660, 35
-    _draw_rounded_rect(
-        draw,
-        (drum_x, drum_y, drum_x + 120, drum_y + 60),
-        15,
-        EQUIP,
-        EQUIP_BORDER,
-    )
-    draw.text((drum_x + 15, drum_y + 5), "REFLUX", fill=TEXT_COLOR)
-    draw.text((drum_x + 20, drum_y + 22), "DRUM", fill=TEXT_COLOR)
-    # Level indicator
-    level_h = int(40 * state.L_Drum)
-    draw.rectangle(
-        [drum_x + 85, drum_y + 50 - level_h, drum_x + 105, drum_y + 50],
-        fill=BLUE_ACCENT,
-    )
-
-    # Condenser -> drum pipe
-    draw.line(
-        [cond_x + 100, cond_y + 25, drum_x, drum_y + 30], fill=PIPE, width=3
-    )
-
-    # Reflux return pipe: drum bottom -> column top
-    draw.line([drum_x + 60, drum_y + 60, drum_x + 60, 140], fill=PIPE, width=3)
-    draw.line([drum_x + 60, 140, col_x + col_w, 140], fill=PIPE, width=3)
-
-    # --- Reboiler (bottom) ---
-    reb_x, reb_y = 320, 440
-    _draw_rounded_rect(
-        draw,
-        (reb_x, reb_y, reb_x + 140, reb_y + 55),
-        10,
-        EQUIP,
-        EQUIP_BORDER,
-    )
-    draw.text((reb_x + 15, reb_y + 8), "REBOILER", fill=TEXT_COLOR)
-    # Flame indicator
+    # Dynamic calculations
+    drum_level = max(0.0, min(1.0, state.L_Drum))
     duty_pct = min(1.0, state.F_Reboil / 3.5)
-    flame_color = (
-        int(200 + 55 * duty_pct),
-        int(100 + 80 * (1 - duty_pct)),
-        30,
-    )
-    draw.ellipse(
-        [reb_x + 100, reb_y + 20, reb_x + 130, reb_y + 45],
-        fill=flame_color,
-    )
 
-    # Column bottom -> reboiler
-    draw.line(
-        [col_x + col_w // 2, col_y + col_h, col_x + col_w // 2, reb_y],
-        fill=PIPE,
-        width=3,
-    )
+    # Flame color based on reboiler duty
+    flame_r = int(200 + 55 * duty_pct)
+    flame_g = int(80 + 100 * (1 - duty_pct))
+    flame_color = f"rgb({flame_r},{flame_g},30)"
+    flame_color2 = f"rgb({min(255, flame_r + 30)},{min(255, flame_g + 40)},60)"
+    flame_opacity = f"{0.4 + 0.6 * duty_pct:.2f}"
 
-    # --- Feed inlet (left) ---
-    draw.line([150, 200, col_x, 200], fill=PIPE, width=3)
-    draw.text((155, 185), "FEED", fill=GREEN)
-
-    # --- Side draw (benzene product, left middle) ---
-    draw.line([col_x, 280, 150, 280], fill=PIPE, width=3)
-    draw.text((155, 265), "BENZENE", fill=GREEN)
-
-    # --- Toluene transfer (bottom right) ---
-    draw.line(
-        [reb_x + 140, reb_y + 28, reb_x + 240, reb_y + 28], fill=PIPE, width=3
-    )
-    draw.text((reb_x + 150, reb_y + 10), "TOLUENE", fill=GREEN)
-
-    # --- HUD: key values ---
-    hud_y = 420
-    hud_items = [
-        f"xB: {state.xB_sd:.4f}",
-        f"dP: {state.dP_col:.3f} bar",
-        f"T: {state.T_top:.1f} C",
-        f"Ref: {state.F_Reflux:.1f} t/h",
-        f"Reb: {state.F_Reboil:.2f} MW",
-        f"ToT: {state.F_ToTol:.1f} t/h",
-    ]
-    x_pos = 20
-    for item in hud_items:
-        draw.text((x_pos, H - 25), item, fill=TEXT_COLOR)
-        x_pos += 145
-
-    # --- Safety badges ---
-    badge_y = col_y + 5
+    # Safety badge
     if esd_triggered:
-        _draw_badge(draw, 30, badge_y, "ESD ACTIVE", BADGE_RED)
+        badge_text = "ESD ACTIVE"
+        badge_color = "#dc3545"
+        badge_animate = True
     elif interlock_active:
-        _draw_badge(draw, 30, badge_y, "INTERLOCK", BADGE_ORANGE)
+        badge_text = "INTERLOCK"
+        badge_color = "#f07828"
+        badge_animate = True
     elif alarms:
-        _draw_badge(draw, 30, badge_y, f"{len(alarms)} ALARM(S)", BADGE_AMBER)
+        badge_text = f"{len(alarms)} ALARM(S)"
+        badge_color = "#f5b432"
+        badge_animate = True
     else:
-        _draw_badge(draw, 30, badge_y, "NORMAL", GREEN)
+        badge_text = "NORMAL"
+        badge_color = "#32c864"
+        badge_animate = False
 
-    st.image(img, use_container_width=True)
+    badge_w = len(badge_text) * 9 + 28
+    pulse_class = ' class="badge-pulse"' if badge_animate else ""
+
+    # Drum level geometry
+    drum_x, drum_y, drum_w, drum_h = 720, 30, 155, 68
+    level_fill_y = drum_y + drum_h * (1 - drum_level)
+    level_fill_h = drum_h * drum_level
+
+    svg_html = f"""<!DOCTYPE html>
+<html><head><style>
+body {{ margin:0; padding:0; background:transparent; overflow:hidden; }}
+
+@keyframes flowRight {{
+  from {{ stroke-dashoffset: 24; }} to {{ stroke-dashoffset: 0; }}
+}}
+@keyframes flowLeft {{
+  from {{ stroke-dashoffset: -24; }} to {{ stroke-dashoffset: 0; }}
+}}
+@keyframes flowDown {{
+  from {{ stroke-dashoffset: 24; }} to {{ stroke-dashoffset: 0; }}
+}}
+@keyframes pulse {{
+  0%,100% {{ opacity:1; }} 50% {{ opacity:0.55; }}
+}}
+@keyframes flicker {{
+  0%,100% {{ transform:scaleY(1) scaleX(1); }}
+  33%     {{ transform:scaleY(1.1) scaleX(0.94); }}
+  66%     {{ transform:scaleY(0.92) scaleX(1.06); }}
+}}
+
+.pipe {{
+  fill:none; stroke:#5a8ab4; stroke-width:4;
+  stroke-linecap:round; stroke-linejoin:round;
+}}
+.pipe-product {{
+  fill:none; stroke:#3cc868; stroke-width:4;
+  stroke-linecap:round; stroke-linejoin:round;
+}}
+.pipe-feed {{
+  fill:none; stroke:#5ab480; stroke-width:4;
+  stroke-linecap:round; stroke-linejoin:round;
+}}
+.flow-r {{ stroke-dasharray:12 12; animation:flowRight .8s linear infinite; }}
+.flow-l {{ stroke-dasharray:12 12; animation:flowLeft .8s linear infinite; }}
+.flow-d {{ stroke-dasharray:12 12; animation:flowDown .8s linear infinite; }}
+.equip-label {{
+  font-family:'Segoe UI',Arial,sans-serif; font-size:11px;
+  font-weight:600; fill:#c8d8e8; letter-spacing:.5px;
+}}
+.equip-sub {{
+  font-family:monospace; font-size:8px; fill:#5a7a98;
+}}
+.stream-label {{
+  font-family:'Segoe UI',Arial,sans-serif; font-size:11px;
+  font-weight:700; letter-spacing:.5px;
+}}
+.tag-box {{ fill:#0c1525; stroke:#3a5a7a; stroke-width:1; }}
+.tag-name {{
+  font-family:'Consolas','Courier New',monospace;
+  font-size:9px; fill:#7a9ab8;
+}}
+.tag-value {{
+  font-family:'Consolas','Courier New',monospace;
+  font-size:12px; font-weight:700; fill:#e0f0ff;
+}}
+.tag-unit {{
+  font-family:'Consolas','Courier New',monospace;
+  font-size:9px; fill:#6a8aa0;
+}}
+.badge-pulse {{ animation:pulse 1.2s ease-in-out infinite; }}
+</style></head>
+<body>
+<svg viewBox="0 0 960 540" xmlns="http://www.w3.org/2000/svg"
+     style="width:100%;height:100%;background:#0f1423;border-radius:10px;">
+<defs>
+  <!-- Equipment gradients -->
+  <linearGradient id="colG" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0%"   stop-color="#243850"/>
+    <stop offset="30%"  stop-color="#385a78"/>
+    <stop offset="70%"  stop-color="#385a78"/>
+    <stop offset="100%" stop-color="#203448"/>
+  </linearGradient>
+  <linearGradient id="eqG" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0%"   stop-color="#2e4560"/>
+    <stop offset="50%"  stop-color="#1e3048"/>
+    <stop offset="100%" stop-color="#162538"/>
+  </linearGradient>
+  <linearGradient id="liqG" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%"   stop-color="#4488cc"/>
+    <stop offset="100%" stop-color="#2a6090"/>
+  </linearGradient>
+  <radialGradient id="flG" cx=".5" cy=".7" r=".6">
+    <stop offset="0%"   stop-color="{flame_color2}"/>
+    <stop offset="60%"  stop-color="{flame_color}"/>
+    <stop offset="100%" stop-color="transparent"/>
+  </radialGradient>
+  <!-- Filters -->
+  <filter id="sh"><feDropShadow dx="2" dy="2" stdDeviation="4" flood-color="#000" flood-opacity=".45"/></filter>
+  <filter id="gl"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  <!-- Arrow markers -->
+  <marker id="aG" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6Z" fill="#3cc868"/></marker>
+  <marker id="aB" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6Z" fill="#5a8ab4"/></marker>
+  <marker id="aF" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6Z" fill="#5ab480"/></marker>
+  <!-- Drum clip -->
+  <clipPath id="dClip">
+    <rect x="{drum_x+2}" y="{drum_y+2}" width="{drum_w-4}" height="{drum_h-4}" rx="32" ry="32"/>
+  </clipPath>
+</defs>
+
+<!-- ===================== PIPES (behind equipment) ===================== -->
+
+<!-- Overhead vapor: column top center → up → condenser left -->
+<polyline points="430,75 430,50 555,50" class="pipe flow-r"/>
+<text x="490" y="44" text-anchor="middle" class="equip-sub" fill="#5a7a98">VAPOR</text>
+
+<!-- Condenser → Drum -->
+<line x1="675" y1="58" x2="720" y2="58" class="pipe flow-r"/>
+
+<!-- Reflux return: drum bottom → down → left → column right -->
+<polyline points="798,98 798,158 480,158" class="pipe flow-l"/>
+<text x="640" y="152" text-anchor="middle" class="equip-sub" fill="#5a7a98">REFLUX</text>
+<line x1="480" y1="158" x2="482" y2="158" class="pipe" marker-end="url(#aB)" stroke="#5a8ab4"/>
+
+<!-- Feed inlet → column left -->
+<line x1="170" y1="195" x2="380" y2="195" class="pipe-feed flow-r"/>
+<line x1="375" y1="195" x2="382" y2="195" class="pipe-feed" marker-end="url(#aF)"/>
+
+<!-- Benzene side draw: column left → left -->
+<line x1="380" y1="275" x2="170" y2="275" class="pipe-product flow-l"/>
+<line x1="170" y1="275" x2="120" y2="275" class="pipe-product" marker-end="url(#aG)"/>
+
+<!-- Column bottom → reboiler top -->
+<line x1="430" y1="392" x2="430" y2="425" class="pipe flow-d"/>
+
+<!-- Reboiler right → toluene out -->
+<line x1="510" y1="452" x2="660" y2="452" class="pipe-product flow-r"/>
+<line x1="660" y1="452" x2="700" y2="452" class="pipe-product" marker-end="url(#aG)"/>
 
 
-def _draw_badge(draw, x, y, text, color):
-    """Draw a status badge."""
-    tw = len(text) * 9 + 20
-    draw.rounded_rectangle([x, y, x + tw, y + 26], radius=6, fill=color)
-    draw.text((x + 10, y + 5), text, fill=(0, 0, 0))
+<!-- ===================== COLUMN ===================== -->
+<g filter="url(#sh)">
+  <rect x="380" y="75" width="100" height="317" rx="14" ry="14"
+        fill="url(#colG)" stroke="#5a7a98" stroke-width="2"/>
+  <!-- Top/bottom caps for 3D -->
+  <ellipse cx="430" cy="79" rx="50" ry="8" fill="#3a5878" stroke="#5a7a98" stroke-width="1.5"/>
+  <ellipse cx="430" cy="388" rx="50" ry="8" fill="#283f58" stroke="#5a7a98" stroke-width="1.5"/>
+  <!-- 8 Trays -->
+  <line x1="394" y1="118" x2="466" y2="118" stroke="#4a6a88" stroke-width="1" stroke-dasharray="4,3"/>
+  <line x1="394" y1="155" x2="466" y2="155" stroke="#4a6a88" stroke-width="1" stroke-dasharray="4,3"/>
+  <line x1="394" y1="192" x2="466" y2="192" stroke="#4a6a88" stroke-width="1" stroke-dasharray="4,3"/>
+  <line x1="394" y1="229" x2="466" y2="229" stroke="#4a6a88" stroke-width="1" stroke-dasharray="4,3"/>
+  <line x1="394" y1="266" x2="466" y2="266" stroke="#4a6a88" stroke-width="1" stroke-dasharray="4,3"/>
+  <line x1="394" y1="303" x2="466" y2="303" stroke="#4a6a88" stroke-width="1" stroke-dasharray="4,3"/>
+  <line x1="394" y1="340" x2="466" y2="340" stroke="#4a6a88" stroke-width="1" stroke-dasharray="4,3"/>
+  <line x1="394" y1="377" x2="466" y2="377" stroke="#4a6a88" stroke-width="1" stroke-dasharray="4,3"/>
+  <!-- Tray numbers -->
+  <text x="470" y="121" font-size="7" fill="#4a6a88" font-family="monospace">1</text>
+  <text x="470" y="158" font-size="7" fill="#4a6a88" font-family="monospace">2</text>
+  <text x="470" y="195" font-size="7" fill="#4a6a88" font-family="monospace">3</text>
+  <text x="470" y="232" font-size="7" fill="#4a6a88" font-family="monospace">4</text>
+  <text x="470" y="269" font-size="7" fill="#4a6a88" font-family="monospace">5</text>
+  <text x="470" y="306" font-size="7" fill="#4a6a88" font-family="monospace">6</text>
+  <text x="470" y="343" font-size="7" fill="#4a6a88" font-family="monospace">7</text>
+  <text x="470" y="380" font-size="7" fill="#4a6a88" font-family="monospace">8</text>
+</g>
+<text x="430" y="97" text-anchor="middle" class="equip-label">COLUMN</text>
+<text x="430" y="109" text-anchor="middle" class="equip-sub">8 TRAYS</text>
+
+
+<!-- ===================== CONDENSER ===================== -->
+<g filter="url(#sh)">
+  <rect x="555" y="32" width="120" height="52" rx="10" ry="10"
+        fill="url(#eqG)" stroke="#5a7a98" stroke-width="2"/>
+  <!-- Cooling tube lines -->
+  <line x1="572" y1="44" x2="572" y2="72" stroke="#4488cc" stroke-width="2" opacity=".4"/>
+  <line x1="587" y1="44" x2="587" y2="72" stroke="#4488cc" stroke-width="2" opacity=".4"/>
+  <line x1="602" y1="44" x2="602" y2="72" stroke="#4488cc" stroke-width="2" opacity=".4"/>
+  <line x1="617" y1="44" x2="617" y2="72" stroke="#4488cc" stroke-width="2" opacity=".4"/>
+  <line x1="632" y1="44" x2="632" y2="72" stroke="#4488cc" stroke-width="2" opacity=".4"/>
+  <line x1="647" y1="44" x2="647" y2="72" stroke="#4488cc" stroke-width="2" opacity=".4"/>
+  <line x1="662" y1="44" x2="662" y2="72" stroke="#4488cc" stroke-width="2" opacity=".4"/>
+</g>
+<text x="615" y="61" text-anchor="middle" class="equip-label">CONDENSER</text>
+
+
+<!-- ===================== REFLUX DRUM ===================== -->
+<g filter="url(#sh)">
+  <rect x="{drum_x}" y="{drum_y}" width="{drum_w}" height="{drum_h}"
+        rx="34" ry="34" fill="url(#eqG)" stroke="#5a7a98" stroke-width="2"/>
+  <!-- Liquid level fill -->
+  <rect x="{drum_x}" y="{level_fill_y:.1f}" width="{drum_w}" height="{level_fill_h:.1f}"
+        fill="url(#liqG)" opacity=".55" clip-path="url(#dClip)"/>
+  <!-- Level gauge marks -->
+  <line x1="{drum_x + drum_w - 8}" y1="{drum_y + 10}" x2="{drum_x + drum_w - 8}" y2="{drum_y + drum_h - 10}"
+        stroke="#5a7a98" stroke-width="1" stroke-dasharray="2,4"/>
+</g>
+<text x="{drum_x + drum_w // 2}" y="60" text-anchor="middle" class="equip-label">REFLUX DRUM</text>
+<text x="{drum_x + drum_w // 2}" y="76" text-anchor="middle"
+      style="font-family:monospace;font-size:10px;font-weight:700;fill:#7ab8e0">{drum_level:.0%}</text>
+
+
+<!-- ===================== REBOILER ===================== -->
+<g filter="url(#sh)">
+  <rect x="350" y="425" width="160" height="58" rx="12" ry="12"
+        fill="url(#eqG)" stroke="#5a7a98" stroke-width="2"/>
+  <!-- Flame glow -->
+  <g style="animation:flicker .5s ease-in-out infinite;transform-origin:485px 458px;">
+    <ellipse cx="485" cy="458" rx="18" ry="22" fill="url(#flG)" opacity="{flame_opacity}"/>
+    <ellipse cx="485" cy="452" rx="9" ry="13" fill="{flame_color2}" opacity="{float(flame_opacity)*0.7:.2f}"/>
+  </g>
+</g>
+<text x="420" y="452" text-anchor="middle" class="equip-label">REBOILER</text>
+<text x="420" y="468" text-anchor="middle"
+      style="font-family:monospace;font-size:10px;font-weight:700;fill:#e8a840">{state.F_Reboil:.2f} MW</text>
+
+
+<!-- ===================== STREAM LABELS ===================== -->
+<!-- Feed -->
+<rect x="110" y="182" width="55" height="22" rx="5" fill="#122818" stroke="#4a9060" stroke-width="1"/>
+<text x="137" y="197" text-anchor="middle" class="stream-label" fill="#5ab480">FEED</text>
+
+<!-- Benzene -->
+<rect x="105" y="262" width="75" height="22" rx="5" fill="#122818" stroke="#3cc868" stroke-width="1"/>
+<text x="142" y="277" text-anchor="middle" class="stream-label" fill="#3cc868">BENZENE</text>
+
+<!-- Toluene -->
+<rect x="705" y="440" width="78" height="22" rx="5" fill="#122818" stroke="#3cc868" stroke-width="1"/>
+<text x="744" y="455" text-anchor="middle" class="stream-label" fill="#3cc868">TOLUENE</text>
+
+
+<!-- ===================== INSTRUMENT TAGS ===================== -->
+<!-- Tag: Benzene Purity -->
+<g transform="translate(20,310)">
+  <rect width="105" height="42" class="tag-box" rx="5"/>
+  <text x="10" y="14" class="tag-name">xB PURITY</text>
+  <text x="10" y="32" class="tag-value">{state.xB_sd:.4f}</text>
+  <text x="68" y="32" class="tag-unit">mol fr</text>
+</g>
+
+<!-- Tag: Column dP -->
+<g transform="translate(20,360)">
+  <rect width="105" height="42" class="tag-box" rx="5"/>
+  <text x="10" y="14" class="tag-name">dP COLUMN</text>
+  <text x="10" y="32" class="tag-value">{state.dP_col:.3f}</text>
+  <text x="68" y="32" class="tag-unit">bar</text>
+</g>
+
+<!-- Tag: Overhead Temperature -->
+<g transform="translate(550,98)">
+  <rect width="105" height="42" class="tag-box" rx="5"/>
+  <text x="10" y="14" class="tag-name">T OVERHEAD</text>
+  <text x="10" y="32" class="tag-value">{state.T_top:.1f}</text>
+  <text x="62" y="32" class="tag-unit">&deg;C</text>
+</g>
+
+<!-- Tag: Reflux Flow -->
+<g transform="translate(700,115)">
+  <rect width="105" height="42" class="tag-box" rx="5"/>
+  <text x="10" y="14" class="tag-name">F REFLUX</text>
+  <text x="10" y="32" class="tag-value">{state.F_Reflux:.1f}</text>
+  <text x="52" y="32" class="tag-unit">t/h</text>
+</g>
+
+<!-- Tag: Reboiler Duty -->
+<g transform="translate(550,460)">
+  <rect width="105" height="42" class="tag-box" rx="5"/>
+  <text x="10" y="14" class="tag-name">Q REBOILER</text>
+  <text x="10" y="32" class="tag-value">{state.F_Reboil:.2f}</text>
+  <text x="60" y="32" class="tag-unit">MW</text>
+</g>
+
+<!-- Tag: Toluene Transfer -->
+<g transform="translate(550,510)">
+  <rect width="105" height="42" class="tag-box" rx="5"/>
+  <text x="10" y="14" class="tag-name">F TOLUENE</text>
+  <text x="10" y="32" class="tag-value">{state.F_ToTol:.1f}</text>
+  <text x="42" y="32" class="tag-unit">t/h</text>
+</g>
+
+
+<!-- ===================== SAFETY BADGE ===================== -->
+<g transform="translate(20,18)"{pulse_class}>
+  <rect width="{badge_w}" height="30" rx="15" fill="{badge_color}" filter="url(#gl)"/>
+  <text x="{badge_w // 2}" y="20" text-anchor="middle"
+        style="font-family:'Segoe UI',Arial,sans-serif;font-size:12px;font-weight:700;fill:#000;">
+    {badge_text}
+  </text>
+</g>
+
+<!-- ===================== TITLE WATERMARK ===================== -->
+<text x="940" y="530" text-anchor="end"
+      style="font-family:'Segoe UI',Arial,sans-serif;font-size:9px;fill:#2a3a50;">
+  BENZENE COLUMN OTS &bull; PROCESS SCHEMATIC
+</text>
+
+</svg>
+</body></html>"""
+
+    components.html(svg_html, height=560, scrolling=False)
