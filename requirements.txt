@@ -1,10 +1,12 @@
-# Core dependencies for Operator Training System
-# Version pins ensure reproducible builds and prevent breaking changes
-
+# Core
 streamlit==1.51.0
-pydantic==2.12.4
 numpy==2.3.5
 pandas==2.3.3
+Pillow==12.0.0
+
+# MPC controller
+cvxpy==1.7.3
+osqp==1.0.5
 
 # Testing
 pytest==9.0.1
